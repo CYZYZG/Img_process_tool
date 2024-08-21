@@ -1,0 +1,174 @@
+# -*-coding:utf-8 -*-
+
+import cv2
+import numpy as np
+from PIL import Image, ImageTk, ImageDraw
+import tkinter as tk
+from tkinter import filedialog, Scrollbar, Canvas
+
+class ImageViewer(tk.Toplevel):
+    def __init__(self, parent, img_name, img_path, block_size, on_block_selected=None):
+        super().__init__(parent)
+        self.image_name = img_name
+        self.img_path = img_path
+        self.block_size = block_size
+        self.on_block_selected = on_block_selected
+        self.setup_ui()
+        self.load_image(img_path)
+
+    def setup_ui(self):
+        """Setup the GUI components for image display."""
+        self.title(self.image_name)
+        self.geometry("960x540")
+        
+        # Create a frame to hold the canvas and scrollbars
+        frame = tk.Frame(self)
+        frame.pack(fill=tk.BOTH, expand=True)
+
+        self.canvas = Canvas(frame, bg="white")
+        self.canvas.grid(row=0, column=0, sticky=tk.NSEW)
+
+        # Create scrollbars
+        self.h_scroll = Scrollbar(frame, orient=tk.HORIZONTAL, command=self.canvas.xview)
+        self.h_scroll.grid(row=1, column=0, sticky=tk.EW)
+
+        self.v_scroll = Scrollbar(frame, orient=tk.VERTICAL, command=self.canvas.yview)
+        self.v_scroll.grid(row=0, column=1, sticky=tk.NS)
+
+        # Configure canvas to scroll
+        self.canvas.configure(xscrollcommand=self.h_scroll.set, yscrollcommand=self.v_scroll.set)
+        self.canvas.bind("<Configure>", self.update_scroll_region)  # Dynamically update scroll region
+
+        self.canvas.bind("<Button-1>", self.on_mouse_click)
+
+        # Make sure the frame can expand with the window
+        frame.grid_rowconfigure(0, weight=1)
+        frame.grid_columnconfigure(0, weight=1)
+
+        self.rect = None  # To store the rectangle ID
+
+    def load_image(self, img_path):
+        """Load and display an image from the given path."""
+        self.img = Image.open(img_path)
+        self.img_tk = ImageTk.PhotoImage(self.img)
+        self.canvas.create_image(0, 0, anchor=tk.NW, image=self.img_tk)
+        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+    
+    def update_scroll_region(self, event=None):
+        """Update the scrollable region of the canvas."""
+        self.canvas.config(scrollregion=self.canvas.bbox(tk.ALL))  # Set the scroll region to include the whole image
+
+    def on_mouse_click(self, event):
+        """Select a block based on mouse click position."""
+        x = int(self.canvas.canvasx(event.x))
+        y = int(self.canvas.canvasy(event.y))
+        x = max(0, min(x, self.img.width - 1))
+        y = max(0, min(y, self.img.height - 1))
+        
+        # Calculate the block coordinates
+        block_x = (x // self.block_size[0]) * self.block_size[0]
+        block_y = (y // self.block_size[1]) * self.block_size[1]
+
+        block = (block_x, block_y, self.block_size[0], self.block_size[1])
+        if self.on_block_selected:
+            self.on_block_selected(block)
+            self.draw_selection_rectangle(block)
+
+    def update_image(self, img):
+        """Update the canvas with a new image."""
+        self.img = img
+        self.img_tk = ImageTk.PhotoImage(self.img)
+        self.canvas.create_image(0, 0, anchor=tk.NW, image=self.img_tk)
+        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+        
+    def draw_selection_rectangle(self, block):
+        """Draw a rectangle on the canvas to indicate the selected block."""
+        if self.rect:
+            self.canvas.delete(self.rect)
+        
+        x1, y1, width, height = block
+        x2 = x1 + width
+        y2 = y1 + height
+        
+        self.rect = self.canvas.create_rectangle(x1, y1, x2, y2, outline="red", width=1)
+
+
+# 匹配块
+def match_block(block, search_image, search_range, block_pos, step=1):
+    bh, bw = block.shape[:2]
+    x_start, y_start = block_pos
+    min_diff = float('inf')
+    best_match_pos = (0, 0)
+
+    for y in range(max(0, y_start - search_range[1]), min(search_image.shape[0] - bh, y_start + search_range[1] + 1), step):
+        for x in range(max(0, x_start - search_range[0]), min(search_image.shape[1] - bw, x_start + search_range[0] + 1), step):
+            search_block = search_image[y:y+bh, x:x+bw]
+            diff = np.sum(np.abs(block - search_block))
+            if diff < min_diff:
+                min_diff = diff
+                best_match_pos = (x, y)
+
+    return best_match_pos, min_diff
+def highlight_block(image, block_pos, block_size):
+    """Highlight a block in the image with a red rectangle."""
+    img = Image.fromarray(image)
+    draw = ImageDraw.Draw(img)
+    x, y = block_pos
+    w, h = block_size
+    draw.rectangle([x, y, x + w, y + h], outline="red", width=1)
+    return img
+
+def on_block_selected(block, img1_rgb, img2_rgb, viewer2, search_range):
+    """Callback function for block selection that updates the second image with the best match."""
+    if block:
+        x1, y1, width, height = block
+        if width > 0 and height > 0:
+            block_img = img1_rgb[y1:y1 + height, x1:x1 + width]
+            
+            step_size = 5
+            best_match, min_diff = match_block(block_img, img2_rgb, search_range, (x1, y1), step_size)
+            if best_match:
+                x, y = best_match
+                img2_highlighted = highlight_block(img2_rgb, (x, y), (width, height))
+                viewer2.update_image(img2_highlighted)
+            else:
+                print("No match found")
+
+def main():
+    root = tk.Tk()
+    root.withdraw()  # Hide the root window
+
+    # Load images
+    img1_path = filedialog.askopenfilename(title="Select the first image")
+    img2_path = filedialog.askopenfilename(title="Select the second image")
+
+    if not img1_path or not img2_path:
+        print("Error: Please select both images.")
+        return
+
+    img1 = cv2.imread(img1_path)
+    img2 = cv2.imread(img2_path)
+
+    if img1 is None or img2 is None:
+        print("Error: One or both images could not be loaded.")
+        return
+
+    if img1.shape[:2] != img2.shape[:2]:
+        print("Error: Images must be the same size.")
+        return
+
+    img1_rgb = cv2.cvtColor(img1, cv2.COLOR_BGR2RGB)
+    img2_rgb = cv2.cvtColor(img2, cv2.COLOR_BGR2RGB)
+
+    # Define block size (width, height)
+    block_size = (10, 10)
+    search_range = (50, 50)  # Horizontal search range
+
+    # Create the ImageViewer for selecting block
+    viewer1 = ImageViewer(root, "Select", img1_path, block_size, on_block_selected=lambda block: on_block_selected(block, img1_rgb, img2_rgb, viewer2, search_range))
+    viewer2 = ImageViewer(root, "Matched", img2_path, block_size)
+
+    root.wait_window(viewer1)  # Wait for user to select a block
+
+if __name__ == "__main__":
+    main()
