@@ -7,14 +7,14 @@ import tkinter as tk
 from tkinter import filedialog, Scrollbar, Canvas
 
 class ImageViewer(tk.Toplevel):
-    def __init__(self, parent, img_name, img_path, block_size, on_block_selected=None):
+    def __init__(self, parent, img_name, image, block_size, on_block_selected=None):
         super().__init__(parent)
         self.image_name = img_name
-        self.img_path = img_path
+        self.img = image
         self.block_size = block_size
         self.on_block_selected = on_block_selected
         self.setup_ui()
-        self.load_image(img_path)
+        self.init_image()
 
     def setup_ui(self):
         """Setup the GUI components for image display."""
@@ -47,10 +47,9 @@ class ImageViewer(tk.Toplevel):
 
         self.rect = None  # To store the rectangle ID
 
-    def load_image(self, img_path):
+    def init_image(self):
         """Load and display an image from the given path."""
-        self.img = Image.open(img_path)
-        self.img_tk = ImageTk.PhotoImage(self.img)
+        self.img_tk = ImageTk.PhotoImage(Image.fromarray(self.img))
         self.canvas.create_image(0, 0, anchor=tk.NW, image=self.img_tk)
         self.canvas.configure(scrollregion=self.canvas.bbox("all"))
     
@@ -62,9 +61,8 @@ class ImageViewer(tk.Toplevel):
         """Select a block based on mouse click position."""
         x = int(self.canvas.canvasx(event.x))
         y = int(self.canvas.canvasy(event.y))
-        x = max(0, min(x, self.img.width - 1))
-        y = max(0, min(y, self.img.height - 1))
-        
+        x = max(0, min(x, self.img.shape[1] - 1))
+        y = max(0, min(y, self.img.shape[0] - 1))
         # Calculate the block coordinates
         block_x = (x // self.block_size[0]) * self.block_size[0]
         block_y = (y // self.block_size[1]) * self.block_size[1]
@@ -118,18 +116,18 @@ def highlight_block(image, block_pos, block_size):
     draw.rectangle([x, y, x + w, y + h], outline="red", width=1)
     return img
 
-def on_block_selected(block, img1_rgb, img2_rgb, viewer2, search_range):
+def on_block_selected(block, img1, img2, viewer2, search_range):
     """Callback function for block selection that updates the second image with the best match."""
     if block:
         x1, y1, width, height = block
         if width > 0 and height > 0:
-            block_img = img1_rgb[y1:y1 + height, x1:x1 + width]
+            block_img = img1[y1:y1 + height, x1:x1 + width]
             
             step_size = 5
-            best_match, min_diff = match_block(block_img, img2_rgb, search_range, (x1, y1), step_size)
+            best_match, min_diff = match_block(block_img, img2, search_range, (x1, y1), step_size)
             if best_match:
                 x, y = best_match
-                img2_highlighted = highlight_block(img2_rgb, (x, y), (width, height))
+                img2_highlighted = highlight_block(img2, (x, y), (width, height))
                 viewer2.update_image(img2_highlighted)
             else:
                 print("No match found")
@@ -157,16 +155,15 @@ def main():
         print("Error: Images must be the same size.")
         return
 
-    img1_rgb = cv2.cvtColor(img1, cv2.COLOR_BGR2RGB)
-    img2_rgb = cv2.cvtColor(img2, cv2.COLOR_BGR2RGB)
+    img1_rgb = cv2.cvtColor(img1, cv2.COLOR_BGR2GRAY)
+    img2_rgb = cv2.cvtColor(img2, cv2.COLOR_BGR2GRAY)
 
     # Define block size (width, height)
     block_size = (10, 10)
     search_range = (50, 50)  # Horizontal search range
-
     # Create the ImageViewer for selecting block
-    viewer1 = ImageViewer(root, "Select", img1_path, block_size, on_block_selected=lambda block: on_block_selected(block, img1_rgb, img2_rgb, viewer2, search_range))
-    viewer2 = ImageViewer(root, "Matched", img2_path, block_size)
+    viewer1 = ImageViewer(root, "Select", img1_rgb, block_size, on_block_selected=lambda block: on_block_selected(block, img1_rgb, img2_rgb, viewer2, search_range))
+    viewer2 = ImageViewer(root, "Matched", img2_rgb, block_size)
 
     root.wait_window(viewer1)  # Wait for user to select a block
 
